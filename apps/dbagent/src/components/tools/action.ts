@@ -75,7 +75,7 @@ export async function actionGetCustomTools(connectionId: string): Promise<Tool[]
       throw new Error('Connection not found');
     }
 
-    const mcpTools = await mcpToolset.listMCPTools();
+    const mcpTools = await mcpToolset.listMCPTools(connection.projectId, connection.connectionString);
     return Object.entries(mcpTools).map(([name, tool]) => ({
       name,
       description: tool.description || 'No description available',
@@ -87,9 +87,13 @@ export async function actionGetCustomTools(connectionId: string): Promise<Tool[]
   }
 }
 
-export async function actionGetCustomToolsFromMCPServer(serverFileName: string): Promise<Tool[]> {
+export async function actionGetCustomToolsFromMCPServer(
+  serverFileName: string,
+  projectId: string,
+  connectionString?: string
+): Promise<Tool[]> {
   try {
-    const mcpTools = await mcpToolset.getMCPToolForServer(serverFileName);
+    const mcpTools = await mcpToolset.getMCPToolForServer(serverFileName, projectId, connectionString);
     return Object.entries(mcpTools).map(([name, tool]) => ({
       name,
       description: tool.description || 'No description available',

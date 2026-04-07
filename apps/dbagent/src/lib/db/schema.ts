@@ -687,19 +687,33 @@ export const mcpServers = pgTable(
     id: uuid('id').primaryKey().defaultRandom().notNull(),
     name: text('name').notNull(),
     serverName: text('server_name').notNull(),
-    filePath: text('file_path').notNull(),
+    filePath: text('file_path'),
     version: text('version').notNull(),
     enabled: boolean('enabled').default(true).notNull(),
     envVars: jsonb('env_vars').$type<Record<string, string>>().default({}).notNull(),
-    createdAt: timestamp('created_at', { mode: 'date' }).defaultNow().notNull()
+    createdAt: timestamp('created_at', { mode: 'date' }).defaultNow().notNull(),
+    projectId: uuid('project_id'),
+    command: text('command').default('node').notNull(),
+    args: jsonb('args').$type<string[]>()
   },
   (table) => [
-    unique('uq_mcp_servers_name').on(table.name),
-    unique('uq_mcp_servers_server_name').on(table.serverName),
+    unique('uq_mcp_servers_name_project').on(table.name, table.projectId),
+    foreignKey({
+      columns: [table.projectId],
+      foreignColumns: [projects.id],
+      name: 'fk_mcp_servers_project'
+    }).onDelete('cascade'),
     pgPolicy('mcp_servers_policy', {
       to: authenticatedUser,
       for: 'all',
-      using: sql`true`
+      using: sql`
+        project_id IS NULL OR
+        EXISTS (
+          SELECT 1 FROM project_members
+          WHERE project_id = mcp_servers.project_id
+            AND user_id = current_setting('app.current_user', true)::TEXT
+        )
+      `
     })
   ]
 );

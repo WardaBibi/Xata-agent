@@ -16,8 +16,8 @@ import { ArrowLeft, PlayCircle, PlusIcon, XIcon } from 'lucide-react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { actionGetConnections, actionGetCustomToolsFromMCPServer } from '~/components/tools/action';
-import { Connection, MCPServerInsert } from '~/lib/db/schema';
+import { actionGetCustomToolsFromMCPServer } from '~/components/tools/action';
+import { MCPServerInsert } from '~/lib/db/schema';
 import { actionCheckUserMcpServerExists, actionUpdateUserMcpServer } from './action';
 
 interface Tool {
@@ -26,7 +26,13 @@ interface Tool {
   isBuiltIn: boolean;
 }
 
-export function McpView({ server: initialServer }: { server: MCPServerInsert }) {
+export function McpView({
+  server: initialServer,
+  connectionString
+}: {
+  server: MCPServerInsert;
+  connectionString?: string;
+}) {
   const { project } = useParams<{ project: string }>();
   const [server, setServer] = useState<MCPServerInsert>(initialServer);
   const [tools, setTools] = useState<Tool[]>([]);
@@ -37,6 +43,9 @@ export function McpView({ server: initialServer }: { server: MCPServerInsert }) 
   const [envVars, setEnvVars] = useState<Record<string, string>>(initialServer.envVars || {});
   const [isSavingEnvVars, setIsSavingEnvVars] = useState(false);
 
+  const projectId = (server.projectId as string) ?? project;
+  const isExternalServer = !server.filePath;
+
   useEffect(() => {
     setServer(initialServer);
     setEnvVars(initialServer.envVars || {});
@@ -46,21 +55,14 @@ export function McpView({ server: initialServer }: { server: MCPServerInsert }) 
     const loadData = async () => {
       setIsLoading(true);
       try {
-        const [connectionsData, serverExists] = await Promise.all([
-          actionGetConnections(project),
-          actionCheckUserMcpServerExists(server.name)
-        ]);
-
+        const serverExists = await actionCheckUserMcpServerExists(server.name, projectId);
         setIsInDb(serverExists);
 
-        const defaultConnection = connectionsData.find((c: Connection) => c.isDefault);
-        if (defaultConnection) {
-          if (serverExists || server.enabled) {
-            const tools = await actionGetCustomToolsFromMCPServer(server.name);
-            setTools(tools);
-          } else {
-            setTools([]);
-          }
+        if (serverExists || server.enabled) {
+          const tools = await actionGetCustomToolsFromMCPServer(server.name, projectId, connectionString);
+          setTools(tools);
+        } else {
+          setTools([]);
         }
         setError(null);
       } catch (error) {
@@ -72,7 +74,7 @@ export function McpView({ server: initialServer }: { server: MCPServerInsert }) 
       }
     };
     void loadData();
-  }, [project, server.name, server.enabled]);
+  }, [project, server.name, server.enabled, projectId, connectionString]);
 
   const handleAddEnvVar = () => {
     setEnvVars({ ...envVars, '': '' });
@@ -96,7 +98,7 @@ export function McpView({ server: initialServer }: { server: MCPServerInsert }) 
     setIsSavingEnvVars(true);
     try {
       if (!isInDb) {
-        toast.error('Cannot save environment variables. Please enable the server first to add it to the database.');
+        toast.error('Cannot save environment variables. Please enable the server first.');
         setIsSavingEnvVars(false);
         return;
       }
@@ -130,10 +132,24 @@ export function McpView({ server: initialServer }: { server: MCPServerInsert }) 
           <CardTitle>MCP Server: {server.serverName}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div>
-            <h3 className="font-semibold">File Path</h3>
-            <p className="text-muted-foreground">{server.filePath}</p>
-          </div>
+          {isExternalServer ? (
+            <div>
+              <h3 className="font-semibold">Type</h3>
+              <p className="text-muted-foreground text-sm">External server (non-Node.js)</p>
+              <div className="bg-muted mt-2 rounded px-3 py-2 font-mono text-sm">
+                {server.command} {(server.args ?? []).join(' ')}
+              </div>
+              <p className="text-muted-foreground mt-1 text-xs">
+                DATABASE_URL is automatically injected from this project&apos;s default connection.
+              </p>
+            </div>
+          ) : (
+            <div>
+              <h3 className="font-semibold">File Path</h3>
+              <p className="text-muted-foreground">{server.filePath}</p>
+            </div>
+          )}
+
           <div>
             <h3 className="font-semibold">Status</h3>
             <p className="text-muted-foreground">
@@ -153,7 +169,8 @@ export function McpView({ server: initialServer }: { server: MCPServerInsert }) 
             <div>
               <h3 className="font-semibold">Environment Variables</h3>
               <p className="text-muted-foreground mb-4 text-sm">
-                These variables will be passed to the MCP server process.
+                These variables are passed to the MCP server process.
+                {isExternalServer && ' DATABASE_URL is injected automatically — only override it here if needed.'}
               </p>
               <div className="space-y-3">
                 {Object.entries(envVars).map(([key, value], index) => (
@@ -194,6 +211,7 @@ export function McpView({ server: initialServer }: { server: MCPServerInsert }) 
               </div>
             </div>
           )}
+
           <div>
             <h3 className="font-semibold">Available Tools</h3>
             {isLoading ? (
@@ -201,7 +219,9 @@ export function McpView({ server: initialServer }: { server: MCPServerInsert }) 
             ) : error ? (
               <p className="text-destructive">{error}</p>
             ) : tools.length === 0 ? (
-              <p className="text-muted-foreground">No tools available</p>
+              <p className="text-muted-foreground">
+                {isInDb ? 'No tools available' : 'Enable the server to preview its tools'}
+              </p>
             ) : (
               <div className="mt-2 space-y-2">
                 {tools.map((tool) => (

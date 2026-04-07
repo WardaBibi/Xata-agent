@@ -36,7 +36,7 @@ export async function getTools({
   const dbTools = getDBSQLTools(targetDb);
   const clusterTools = getDBClusterTools(dbAccess, connection, project.cloudProvider);
   const playbookToolset = getPlaybookToolset(dbAccess, project.id);
-  const mcpTools = await mcpToolset.listMCPTools();
+  const mcpTools = await mcpToolset.listMCPTools(project.id, connection.connectionString);
 
   const artifactsToolset =
     useArtifacts && dataStream ? getArtifactTools({ dbAccess, userId, projectId: project.id, dataStream }) : {};

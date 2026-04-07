@@ -7,6 +7,7 @@ import {
   Badge,
   Button,
   Code,
+  Input,
   Switch,
   Table,
   TableBody,
@@ -14,11 +15,12 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  toast,
   Tooltip,
   TooltipContent,
   TooltipTrigger
 } from '@xata.io/components';
-import { ChevronLeftIcon, ChevronRightIcon } from 'lucide-react';
+import { ChevronLeftIcon, ChevronRightIcon, PlusIcon } from 'lucide-react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
@@ -27,6 +29,7 @@ import {
   actionAddUserMcpServerToDB,
   actionCheckUserMcpServerExists,
   actionGetUserMcpServer,
+  actionRegisterExternalMcpServer,
   actionUpdateUserMcpServer
 } from './action';
 
@@ -40,9 +43,16 @@ export function McpTable() {
   const { project } = useParams<{ project: string }>();
   const [currentPage, setCurrentPage] = useState(1);
 
+  // External server registration form
+  const [showExternalForm, setShowExternalForm] = useState(false);
+  const [extName, setExtName] = useState('');
+  const [extCommand, setExtCommand] = useState('uvx');
+  const [extArgs, setExtArgs] = useState('');
+  const [isRegistering, setIsRegistering] = useState(false);
+
   const loadMcpServers = async () => {
     try {
-      const response = await fetch('/api/mcp/servers');
+      const response = await fetch(`/api/mcp/servers?projectId=${project}`);
 
       if (!response.ok) {
         throw new Error('Failed to fetch MCP servers');
@@ -54,8 +64,8 @@ export function McpTable() {
       await Promise.all(
         servers.map(async (server: MCPServer) => {
           const [getServerFromDb, exists] = await Promise.all([
-            actionGetUserMcpServer(server.name),
-            actionCheckUserMcpServerExists(server.name)
+            actionGetUserMcpServer(server.name, project),
+            actionCheckUserMcpServerExists(server.name, project)
           ]);
           server.enabled = getServerFromDb?.enabled || false;
           status[server.name] = exists;
@@ -80,15 +90,35 @@ export function McpTable() {
     );
     targetMcpServer.enabled = !targetMcpServer.enabled;
 
-    const serverExists = await actionCheckUserMcpServerExists(targetMcpServer.name);
+    const serverExists = await actionCheckUserMcpServerExists(targetMcpServer.name, project);
     if (!serverExists) {
-      await actionAddUserMcpServerToDB(targetMcpServer);
-      setmcpServerInDb((prev) => ({
-        ...prev,
-        [targetMcpServer.name]: true
-      }));
+      await actionAddUserMcpServerToDB({ ...targetMcpServer, projectId: project });
+      setmcpServerInDb((prev) => ({ ...prev, [targetMcpServer.name]: true }));
     } else {
-      await actionUpdateUserMcpServer(targetMcpServer);
+      await actionUpdateUserMcpServer({ ...targetMcpServer, projectId: project });
+    }
+  };
+
+  const handleRegisterExternal = async () => {
+    if (!extName.trim() || !extCommand.trim() || !extArgs.trim()) {
+      toast.error('Name, command, and args are required.');
+      return;
+    }
+    setIsRegistering(true);
+    try {
+      const args = extArgs.trim().split(/\s+/);
+      await actionRegisterExternalMcpServer(project, { name: extName.trim(), command: extCommand.trim(), args });
+      toast.success(`Registered "${extName}" successfully.`);
+      setExtName('');
+      setExtCommand('uvx');
+      setExtArgs('');
+      setShowExternalForm(false);
+      await loadMcpServers();
+    } catch (error) {
+      console.error('Error registering external server:', error);
+      toast.error('Failed to register server. Name may already exist for this project.');
+    } finally {
+      setIsRegistering(false);
     }
   };
 
@@ -117,7 +147,43 @@ export function McpTable() {
     <div>
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-2xl font-bold">MCP Servers</h1>
+        <Button variant="outline" size="sm" onClick={() => setShowExternalForm((v) => !v)}>
+          <PlusIcon className="mr-2 h-4 w-4" />
+          Register External Server
+        </Button>
       </div>
+
+      {showExternalForm && (
+        <div className="mb-6 space-y-3 rounded-lg border p-4">
+          <h2 className="font-semibold">Register External MCP Server</h2>
+          <p className="text-muted-foreground text-sm">
+            For non-Node.js servers (e.g. Python). DATABASE_URL is automatically injected from this project&apos;s
+            connection.
+          </p>
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className="mb-1 block text-sm font-medium">Name</label>
+              <Input placeholder="postgres-mcp" value={extName} onChange={(e) => setExtName(e.target.value)} />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium">Command</label>
+              <Input placeholder="uvx" value={extCommand} onChange={(e) => setExtCommand(e.target.value)} />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium">Args (space-separated)</label>
+              <Input placeholder="postgres-mcp" value={extArgs} onChange={(e) => setExtArgs(e.target.value)} />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setShowExternalForm(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleRegisterExternal} disabled={isRegistering}>
+              {isRegistering ? 'Registering...' : 'Register'}
+            </Button>
+          </div>
+        </div>
+      )}
 
       <div className="mb-6">
         <Alert>
@@ -140,7 +206,8 @@ export function McpTable() {
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>Sever Name</TableHead>
+            <TableHead>Server Name</TableHead>
+            <TableHead>Type</TableHead>
             <TableHead>Enabled</TableHead>
             <TableHead>Actions</TableHead>
           </TableRow>
@@ -173,6 +240,11 @@ export function McpTable() {
                 </div>
               </TableCell>
               <TableCell>
+                <span className="text-muted-foreground text-sm">
+                  {server.filePath ? 'Node.js' : `External (${server.command})`}
+                </span>
+              </TableCell>
+              <TableCell>
                 <Switch checked={server.enabled} onCheckedChange={() => handleToggleEnabled(server)} />
               </TableCell>
               <TableCell>
@@ -185,7 +257,6 @@ export function McpTable() {
         </TableBody>
       </Table>
 
-      {/* Pagination */}
       {!isLoading && mcpServers.length > 0 && (
         <div className="mt-4 flex items-center justify-between">
           <div className="text-muted-foreground text-sm">
