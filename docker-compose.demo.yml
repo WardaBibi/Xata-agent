@@ -1,0 +1,34 @@
+services:
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-dbagent}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: ${POSTGRES_DB:-dbagent}
+    volumes:
+      - agent_postgres_data:/var/lib/postgresql/data
+    networks:
+      - db_network
+
+  xata-agent:
+    image: ghcr.io/wardabibi/xata-agent:latest
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-dbagent}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-dbagent}
+      NODE_ENV: production
+      AUTH_TRUST_HOST: ${AUTH_TRUST_HOST:-localhost}
+    env_file: '.env.production'
+    ports:
+      - '8080:8080'
+    depends_on:
+      - postgres
+    networks:
+      - db_network
+
+volumes:
+  agent_postgres_data:
+
+networks:
+  db_network:
+    driver: bridge
