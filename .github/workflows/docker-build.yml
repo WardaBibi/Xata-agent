@@ -71,15 +71,19 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # Run Trivy directly from its official image rather than the composite
+      # action — the action's transitive `uses:` pins break job setup. A plain
+      # `run:` step has nothing to resolve, so it can never block the build.
       - name: Trivy vulnerability scan
-        uses: aquasecurity/trivy-action@v0.30.0
         continue-on-error: true # scan is compliance evidence, not a build gate
-        with:
-          image-ref: ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
-          format: sarif
-          output: trivy-results.sarif
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$GITHUB_WORKSPACE:/out" \
+            aquasec/trivy:0.58.0 image \
+            --format sarif --output /out/trivy-results.sarif \
+            --severity CRITICAL,HIGH --ignore-unfixed \
+            "${{ fromJSON(steps.meta.outputs.json).tags[0] }}"
 
       - name: Upload scan results to Security tab
         if: hashFiles('trivy-results.sarif') != ''
